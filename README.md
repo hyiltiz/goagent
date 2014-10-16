@@ -16,6 +16,9 @@ goagent 3.2.0 正式版下载 [http://git.io/goa](https://nodeload.github.com/go
   * Firefox 请安装 [FoxyProxy](https://addons.mozilla.org/zh-cn/firefox/addon/foxyproxy-standard/) ，Firefox需要导入证书，方法请见 FAQ
   * 出现连接不上的情况可以尝试使用 [GoGo Tester](https://github.com/azzvx/gogotester/raw/2.3/GoGo%20Tester/bin/Release/GoGo%20Tester.exe) 测速。
 
+## 讨论区
+* https://code.google.com/p/goagent/issues/list
+
 ## 图文教程
 * https://goagent.github.io/?/wiki/InstallGuide.md
 
@@ -27,6 +30,3 @@ goagent 3.2.0 正式版下载 [http://git.io/goa](https://nodeload.github.com/go
 
 ## 更新历史
 * https://goagent.github.io/?/wiki/History.md
-
-## 讨论区
-* https://code.google.com/p/goagent/issues/list

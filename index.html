@@ -1,43 +1,8 @@
-
-<!doctype html>
-<html>
+ <html xmlns="http://www.w3.org/1999/xhtml">    
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, minimal-ui">
-    <script>
-        if (document.location.href.indexOf("http://") == 0) {
-            document.location = document.location.href.replace("http:", "https:", 1);
-        }
-    </script>
-    <link rel="stylesheet" href="github-markdown.css">
-    <script src="marked.js"></script>
-  </head>
-  <body style="min-width:200px; max-width:900px; margin:auto; padding:16px;">
-    <div id="content" class="markdown-body"></div>
-    <script>
-    (function() {
-        if (window.XMLHttpRequest) {
-            var request = new XMLHttpRequest();
-        } else {
-            var request = new ActiveXObject("Microsoft.XMLHTTP");
-        }
-        request.onreadystatechange = render;
-        var path = "index.md";
-        if (document.location.href.indexOf('?') > 0) {
-            path = document.location.href.substring(document.location.href.indexOf('?')+1);
-        }
-        request.open('GET', path, true);
-        request.send();
-        function render() {
-            if (request.readyState == 4) {
-                if (request.status >= 200 && request.status < 400){
-                    document.getElementById("content").innerHTML = marked(request.responseText);
-                } else {
-                    document.location = "https://github.com/goagent/goagent";
-                }
-            }
-        }
-    })();
-    </script>
-  </body>
+    <meta http-equiv="refresh" content="0;URL='https://goagent.github.io/'" />    
+  </head>    
+  <body> 
+    <p>This page has moved to a <a href="https://goagent.github.io/">goagent.github.io</a>.</p> 
+  </body>  
 </html>

@@ -12,7 +12,7 @@
 |cvx3003@gmail.com | wxj8104 的刷屏小号。|
 |democra234@gmail.com | wxj8104 的反串角色|
 |324klz@gmail.com | 刷屏+反串五毛|
-|gl58392@gmail.com | 公务员自干五，喜欢刷屏。|
+|gl58392@gmail.com | 公务员自干五，喜欢用周小平的文章刷屏。|
 |xrhaiy@gmail.com | 言语粗俗五毛，喜欢用轮子帽子攻击几乎所有网友。|
 |gbaoye@gmail.com | 精分自干五，被截屏抓住证据之后，暂时沉寂。|
 |gbaoye123@gmail.com | gbaoye 小号。|

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding:utf-8
 
-__version__ = '1.0'
+__version__ = '1.1'
 
 import sys
 import os
@@ -145,7 +145,7 @@ class CertUtil(object):
 
     ca_vendor = 'GoAgent'
     ca_keyfile = 'CA.crt'
-    ca_footprint = 'AB:70:2C:DF:18:EB:E8:B4:38:C5:28:69:CD:4A:5D:EF:48:B4:0E:33'
+    ca_thumbprint = ''
     ca_certdir = 'certs'
     ca_lock = threading.Lock()
 
@@ -153,26 +153,23 @@ class CertUtil(object):
     def create_ca():
         key = OpenSSL.crypto.PKey()
         key.generate_key(OpenSSL.crypto.TYPE_RSA, 2048)
-        ca = OpenSSL.crypto.X509()
-        ca.set_serial_number(0)
-        ca.set_version(2)
-        subj = ca.get_subject()
+        req = OpenSSL.crypto.X509Req()
+        subj = req.get_subject()
         subj.countryName = 'CN'
         subj.stateOrProvinceName = 'Internet'
         subj.localityName = 'Cernet'
         subj.organizationName = CertUtil.ca_vendor
         subj.organizationalUnitName = '%s Root' % CertUtil.ca_vendor
         subj.commonName = '%s CA' % CertUtil.ca_vendor
+        req.set_pubkey(key)
+        req.sign(key, 'sha1')
+        ca = OpenSSL.crypto.X509()
+        ca.set_serial_number(0)
         ca.gmtime_adj_notBefore(0)
         ca.gmtime_adj_notAfter(24 * 60 * 60 * 3652)
-        ca.set_issuer(ca.get_subject())
-        ca.set_pubkey(key)
-        ca.add_extensions([
-            OpenSSL.crypto.X509Extension(b'basicConstraints', True, b'CA:TRUE'),
-            # OpenSSL.crypto.X509Extension(b'nsCertType', True, b'sslCA'),
-            OpenSSL.crypto.X509Extension(b'extendedKeyUsage', True, b'serverAuth,clientAuth,emailProtection,timeStamping,msCodeInd,msCodeCom,msCTLSign,msSGC,msEFS,nsSGC'),
-            OpenSSL.crypto.X509Extension(b'keyUsage', False, b'keyCertSign, cRLSign'),
-            OpenSSL.crypto.X509Extension(b'subjectKeyIdentifier', False, b'hash', subject=ca), ])
+        ca.set_issuer(req.get_subject())
+        ca.set_subject(req.get_subject())
+        ca.set_pubkey(req.get_pubkey())
         ca.sign(key, 'sha1')
         return key, ca
 
@@ -185,7 +182,8 @@ class CertUtil(object):
 
     @staticmethod
     def get_cert_serial_number(commonname):
-        saltname = '%s|%s' % (CertUtil.ca_footprint, commonname)
+        assert CertUtil.ca_thumbprint
+        saltname = '%s|%s' % (CertUtil.ca_thumbprint, commonname)
         return int(hashlib.md5(saltname.encode('utf-8')).hexdigest(), 16)
 
     @staticmethod
@@ -275,15 +273,12 @@ class CertUtil(object):
                 X509_ASN_ENCODING = 0x00000001
                 class CRYPT_HASH_BLOB(ctypes.Structure):
                     _fields_ = [('cbData', ctypes.c_ulong), ('pbData', ctypes.c_char_p)]
-                crypt_hash = CRYPT_HASH_BLOB(20, binascii.a2b_hex(CertUtil.ca_footprint.replace(':', '')))
+                assert CertUtil.ca_thumbprint
+                crypt_hash = CRYPT_HASH_BLOB(20, binascii.a2b_hex(CertUtil.ca_thumbprint.replace(':', '')))
                 crypt_handle = crypt32.CertFindCertificateInStore(store_handle, X509_ASN_ENCODING, 0, CERT_FIND_HASH, ctypes.byref(crypt_hash), None)
                 if crypt_handle:
                     crypt32.CertFreeCertificateContext(crypt_handle)
                     return 0
-                # while True:
-                #     crypt_handle = crypt32.CertFindCertificateInStore(store_handle, X509_ASN_ENCODING, 0, CERT_FIND_SUBJECT_STR, CertUtil.ca_vendor, None)
-                #     if crypt_handle:
-                #         #TODO: delete it
                 ret = crypt32.CertAddEncodedCertificateToStore(store_handle, 0x1, certdata, len(certdata), 4, None)
                 crypt32.CertCloseStore(store_handle, 0)
                 del crypt32
@@ -305,6 +300,32 @@ class CertUtil(object):
         return 0
 
     @staticmethod
+    def remove_ca(name):
+        import ctypes
+        import ctypes.wintypes
+        class CERT_CONTEXT(ctypes.Structure):
+            _fields_ = [
+                ('dwCertEncodingType', ctypes.wintypes.DWORD),
+                ('pbCertEncoded', ctypes.POINTER(ctypes.wintypes.BYTE)),
+                ('cbCertEncoded', ctypes.wintypes.DWORD),
+                ('pCertInfo', ctypes.c_void_p),
+                ('hCertStore', ctypes.c_void_p),]
+        crypt32 = ctypes.WinDLL(b'crypt32.dll'.decode())
+        store_handle = crypt32.CertOpenStore(10, 0, 0, 0x4000 | 0x20000, b'ROOT'.decode())
+        pCertCtx = crypt32.CertEnumCertificatesInStore(store_handle, None)
+        while pCertCtx:
+            certCtx = CERT_CONTEXT.from_address(pCertCtx)
+            certdata = ctypes.string_at(certCtx.pbCertEncoded, certCtx.cbCertEncoded)
+            cert =  OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, certdata)
+            if hasattr(cert, 'get_subject'):
+                cert = cert.get_subject()
+            cert_name = next((v for k, v in cert.get_components() if k == 'CN'), '')
+            if cert_name and name == cert_name:
+                crypt32.CertDeleteCertificateFromStore(crypt32.CertDuplicateCertificateContext(pCertCtx))
+            pCertCtx = crypt32.CertEnumCertificatesInStore(store_handle, pCertCtx)
+        return 0
+
+    @staticmethod
     def check_ca():
         #Check CA exists
         capath = os.path.join(os.path.dirname(os.path.abspath(__file__)), CertUtil.ca_keyfile)
@@ -312,9 +333,14 @@ class CertUtil(object):
         if not os.path.exists(capath):
             if os.path.exists(certdir):
                 any(os.remove(x) for x in glob.glob(certdir+'/*.crt')+glob.glob(certdir+'/.*.crt'))
+            if os.name == 'nt':
+                try:
+                    CertUtil.remove_ca('%s CA' % CertUtil.ca_vendor)
+                except Exception as e:
+                    logging.warning('CertUtil.remove_ca failed: %r', e)
             CertUtil.dump_ca()
         with open(capath, 'rb') as fp:
-            CertUtil.ca_footprint = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, fp.read()).digest('sha1')
+            CertUtil.ca_thumbprint = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, fp.read()).digest('sha1')
         #Check Certs
         certfiles = glob.glob(certdir+'/*.crt')+glob.glob(certdir+'/.*.crt')
         if certfiles:
@@ -540,6 +566,7 @@ def dnslib_resolve_over_udp(query, dnsservers, timeout, **kwargs):
     http://gfwrev.blogspot.com/2009/11/gfwdns.html
     http://zh.wikipedia.org/wiki/%E5%9F%9F%E5%90%8D%E6%9C%8D%E5%8A%A1%E5%99%A8%E7%BC%93%E5%AD%98%E6%B1%A1%E6%9F%93
     http://support.microsoft.com/kb/241352
+    https://gist.github.com/klzgrad/f124065c0616022b65e5
     """
     if not isinstance(query, (basestring, dnslib.DNSRecord)):
         raise TypeError('query argument requires string/DNSRecord')
@@ -562,8 +589,12 @@ def dnslib_resolve_over_udp(query, dnsservers, timeout, **kwargs):
             try:
                 for dnsserver in dns_v4_servers:
                     if isinstance(query, basestring):
+                        if dnsserver in ('8.8.8.8', '8.8.4.4'):
+                            query = '.'.join(x[:-1] + x[-1].upper() for x in query.split('.')).title()
                         query = dnslib.DNSRecord(q=dnslib.DNSQuestion(query))
                     query_data = query.pack()
+                    if query.q.qtype == 1 and dnsserver in ('8.8.8.8', '8.8.4.4'):
+                        query_data = query_data[:-5] + '\xc0\x04' + query_data[-4:]
                     sock_v4.sendto(query_data, parse_hostport(dnsserver, 53))
                 for dnsserver in dns_v6_servers:
                     if isinstance(query, basestring):
@@ -715,6 +746,11 @@ def extract_sni_name(packet):
             if etype == 0:
                 server_name = edata[5:]
                 return server_name
+
+def random_hostname():
+    word = ''.join(random.choice(('bcdfghjklmnpqrstvwxyz', 'aeiou')[x&1]) for x in xrange(random.randint(5, 10)))
+    gltd = random.choice(['org', 'com', 'net', 'gov', 'cn'])
+    return 'www.%s.%s' % (word, gltd)
 
 
 def get_uptime():
@@ -1136,15 +1172,16 @@ class DirectRegionFilter(BaseProxyHandlerFilter):
         except KeyError:
             pass
         try:
-            if hostname.startswith(('127.', '192.168.', '10.')):
-                return 'LOCAL'
             if re.match(r'^\d+\.\d+\.\d+\.\d+$', hostname) or ':' in hostname:
                 iplist = [hostname]
             elif dnsservers:
                 iplist = dnslib_record2iplist(dnslib_resolve_over_udp(hostname, dnsservers, timeout=2))
             else:
                 iplist = socket.gethostbyname_ex(hostname)[-1]
-            country_code = self.geoip.country_code_by_addr(iplist[0])
+            if iplist[0].startswith(('127.', '192.168.', '10.')):
+                country_code = 'LOCAL'
+            else:
+                country_code = self.geoip.country_code_by_addr(iplist[0])
         except StandardError as e:
             logging.warning('DirectRegionFilter cannot determine region for hostname=%r %r', hostname, e)
             country_code = ''
@@ -1367,6 +1404,8 @@ class StaticFileFilter(BaseProxyHandlerFilter):
                 try:
                     import mimetypes
                     content_type = mimetypes.types_map.get(os.path.splitext(path)[1])
+                    if os.path.splitext(path)[1].endswith(('crt', 'pem')):
+                        content_type = 'application/x-x509-ca-cert'
                 except StandardError as e:
                     logging.error('import mimetypes failed: %r', e)
                 with open(path, 'rb') as fp:
@@ -1551,7 +1590,7 @@ class MultipleConnectionMixin(object):
     ssl_connection_keepalive = False
     iplist_predefined = set([])
     max_window = 4
-    connect_timeout = 4
+    connect_timeout = 6
     max_timeout = 8
     ssl_version = ssl.PROTOCOL_SSLv23
     openssl_context = OpenSSL.SSL.Context(OpenSSL.SSL.SSLv23_METHOD)
@@ -1665,7 +1704,7 @@ class MultipleConnectionMixin(object):
         try:
             while cache_key:
                 ctime, sock = self.tcp_connection_cache[cache_key].get_nowait()
-                if time.time() - ctime < 8:
+                if time.time() - ctime < self.connect_timeout:
                     return sock
                 else:
                     sock.close()
@@ -1801,10 +1840,10 @@ class MultipleConnectionMixin(object):
             ssl_sock = None
             timer = None
             NetworkError = (socket.error, OpenSSL.SSL.Error, OSError)
-            if gevent:
+            if gevent and (ipaddr[0] not in self.iplist_predefined):
                 NetworkError += (gevent.Timeout,)
-                timer = gevent.Timeout(timeout)
-                timer.start()
+                #timer = gevent.Timeout(timeout)
+                #timer.start()
             try:
                 # create a ipv4/ipv6 socket object
                 sock = socket.socket(socket.AF_INET if ':' not in ipaddr[0] else socket.AF_INET6)
@@ -1819,7 +1858,7 @@ class MultipleConnectionMixin(object):
                 # set a short timeout to trigger timeout retry more quickly.
                 sock.settimeout(timeout or self.connect_timeout)
                 # pick up the certificate
-                server_hostname = b'www.googleapis.com' if (cache_key or '').startswith('google_') or hostname.endswith('.appspot.com') else None
+                server_hostname = random_hostname() if (cache_key or '').startswith('google_') or hostname.endswith('.appspot.com') else None
                 ssl_sock = SSLConnection(self.openssl_context, sock)
                 ssl_sock.set_connect_state()
                 if server_hostname and hasattr(ssl_sock, 'set_tlsext_host_name'):
@@ -1917,7 +1956,7 @@ class MultipleConnectionMixin(object):
         try:
             while cache_key:
                 ctime, sock = self.ssl_connection_cache[cache_key].get_nowait()
-                if time.time() - ctime < 4:
+                if time.time() - ctime < self.connect_timeout:
                     return sock
                 else:
                     sock.close()
@@ -1928,22 +1967,19 @@ class MultipleConnectionMixin(object):
         sock = None
         for i in range(kwargs.get('max_retry', 4)):
             reorg_ipaddrs()
-            window = self.max_window + i
-            if len(self.ssl_connection_good_ipaddrs) > len(self.ssl_connection_bad_ipaddrs):
-                window = max(2, window-2)
-            if len(self.ssl_connection_bad_ipaddrs)/2 >= len(self.ssl_connection_good_ipaddrs) <= 1.5 * window:
-                window += 2
-            good_ipaddrs = [x for x in addresses if x in self.ssl_connection_good_ipaddrs]
-            good_ipaddrs = sorted(good_ipaddrs, key=self.ssl_connection_time.get)[:window]
+            good_ipaddrs = sorted([x for x in addresses if x in self.ssl_connection_good_ipaddrs], key=self.ssl_connection_time.get)
+            bad_ipaddrs = sorted([x for x in addresses if x in self.ssl_connection_bad_ipaddrs], key=self.ssl_connection_bad_ipaddrs.get)
             unknown_ipaddrs = [x for x in addresses if x not in self.ssl_connection_good_ipaddrs and x not in self.ssl_connection_bad_ipaddrs]
             random.shuffle(unknown_ipaddrs)
-            unknown_ipaddrs = unknown_ipaddrs[:window]
-            bad_ipaddrs = [x for x in addresses if x in self.ssl_connection_bad_ipaddrs]
-            bad_ipaddrs = sorted(bad_ipaddrs, key=self.ssl_connection_bad_ipaddrs.get)[:window]
-            addrs = good_ipaddrs + unknown_ipaddrs + bad_ipaddrs
-            remain_window = 3 * window - len(addrs)
-            if 0 < remain_window <= len(addresses):
-                addrs += random.sample(addresses, remain_window)
+            window = self.max_window + i
+            if len(bad_ipaddrs) < 0.2 * len(good_ipaddrs) and len(good_ipaddrs) > 10:
+                addrs = good_ipaddrs[:window]
+                addrs += [random.choice(unknown_ipaddrs)] if unknown_ipaddrs else []
+            elif len(good_ipaddrs) > 2 * window or len(bad_ipaddrs) < 0.5 * len(good_ipaddrs):
+                addrs = (good_ipaddrs[:window] + unknown_ipaddrs + bad_ipaddrs)[:2*window]
+            else:
+                addrs = good_ipaddrs[:window] + unknown_ipaddrs[:window] + bad_ipaddrs[:window]
+                addrs += random.sample(addresses, min(len(addresses), 3*window-len(addrs))) if len(addrs) < 3*window else []
             logging.debug('%s good_ipaddrs=%d, unknown_ipaddrs=%r, bad_ipaddrs=%r', cache_key, len(good_ipaddrs), len(unknown_ipaddrs), len(bad_ipaddrs))
             queobj = Queue.Queue()
             for addr in addrs:
